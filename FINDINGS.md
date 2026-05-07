@@ -13,7 +13,7 @@ The reviewed implementation adds active/active replication controls, `REPLICAOF 
 
 ## Current Result
 
-The rebased branch builds and the focused active/active suites pass after local fixes. This pass adds the first productionization guardrails: an explicit command semantics matrix, debug-only access to `MVCCRESTORE`, unlimited MVCC RDB clock persistence by default, and layered TLA+ specs for core replay and future typed merge semantics.
+The rebased branch builds and the focused active/active suites pass after local fixes. This pass adds the first productionization guardrails: an explicit command semantics matrix, debug-only access to `MVCCRESTORE`, unlimited MVCC RDB clock persistence by default, a requirement that active/active mode keep AOF RDB preambles enabled, and layered TLA+ specs for core replay and future typed merge semantics.
 
 The correctness envelope is still deliberately narrow:
 - Allowed local/replay writes: `SET`, `MSET`, single-key `DEL`, and internal `MVCCRESTORE`.
@@ -31,7 +31,7 @@ Focused tests:
 | Test | Result |
 | --- | --- |
 | `unit/rreplay` | 3 passed, 0 failed |
-| `integration/replication-multimaster-rreplay` | 19 passed, 0 failed |
+| `integration/replication-multimaster-rreplay` | 20 passed, 0 failed |
 | `integration/replication-multimaster` | 14 passed, 0 failed |
 | `integration/replication-multimaster-upstreams` | 11 passed, 0 failed |
 | `integration/replication-multimaster-topologies` | 9 passed, 0 failed |
@@ -102,15 +102,25 @@ Fix:
 - RREPLAY payload execution still works because replay uses a fake/internal client.
 - INFO replication exposes `active_replica_debug_commands` so the unsafe debug surface is visible.
 
+### 5. Active/Active Could Be Combined With AOF Without Metadata Preambles
+
+Bug found during follow-through: active/active metadata is persisted through RDB AUX fields. If a node is configured to use AOF without an RDB preamble, a restart can replay dataset mutations without the matching MVCC/replay metadata. That weakens stale replay rejection after restart.
+
+Fix:
+- `multi-master yes` now requires `aof-use-rdb-preamble yes`.
+- `CONFIG SET aof-use-rdb-preamble no` is rejected while `multi-master` is enabled.
+- `CONFIG SET appendonly yes` also refuses the unsafe combination if the preamble is disabled.
+- Regression coverage asserts the unsafe preamble change is rejected in active/active mode.
+
 ## Open Risks
 
 ### MVCC Clock Persistence Cap
 
 `mvcc-rdb-clock-max-entries` can cap persisted key clocks if configured to a positive value. The production default is now `0` (unlimited) so correctness-critical metadata is not silently dropped by default. The cap remains a debug/operational escape hatch and still degrades stale-write protection when deliberately enabled.
 
-### AOF-Only Restart Semantics
+### AOF Rewrite And Restart Semantics
 
-The audit focused on RDB AUX metadata. AOF-only and AOF rewrite behavior still need direct testing. If the dataset is replayed without the corresponding MVCC/dedupe metadata, stale replay protection can be weaker after restart.
+Active/active mode now refuses AOF without an RDB preamble, closing the obvious metadata-loss configuration. Direct AOF rewrite/restart fault tests are still needed to prove that rewritten base files and incremental AOF segments always retain or reconstruct the required MVCC/dedupe metadata.
 
 ### Replay ACK And Queue Semantics
 
