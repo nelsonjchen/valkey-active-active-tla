@@ -13,7 +13,9 @@ The reviewed implementation adds active/active replication controls, `REPLICAOF 
 
 ## Current Result
 
-The rebased branch builds and the focused active/active suites pass after local fixes. The correctness envelope is now deliberately narrow:
+The rebased branch builds and the focused active/active suites pass after local fixes. This pass adds the first productionization guardrails: an explicit command semantics matrix, debug-only access to `MVCCRESTORE`, unlimited MVCC RDB clock persistence by default, and layered TLA+ specs for core replay and future typed merge semantics.
+
+The correctness envelope is still deliberately narrow:
 - Allowed local/replay writes: `SET`, `MSET`, single-key `DEL`, and internal `MVCCRESTORE`.
 - Rejected before mutation: streams, functions, relative TTL mutation, transactions, RMW commands such as `INCR`/`APPEND`/`HINCRBY`/`ZINCRBY`, partial collection mutations such as `HSET`/`ZADD`/`SADD`/`LPUSH`, `RENAME`, and multi-key `DEL`.
 
@@ -29,7 +31,7 @@ Focused tests:
 | Test | Result |
 | --- | --- |
 | `unit/rreplay` | 3 passed, 0 failed |
-| `integration/replication-multimaster-rreplay` | 18 passed, 0 failed |
+| `integration/replication-multimaster-rreplay` | 19 passed, 0 failed |
 | `integration/replication-multimaster` | 14 passed, 0 failed |
 | `integration/replication-multimaster-upstreams` | 11 passed, 0 failed |
 | `integration/replication-multimaster-topologies` | 9 passed, 0 failed |
@@ -40,11 +42,13 @@ Focused tests:
 Formal/model checks:
 - `audit/formal/MultiMaster-supported.cfg`: no TLC invariant violations; 5,510,617 states generated, 1,167,907 distinct states.
 - `audit/formal/MultiMaster-unsupported.cfg`: no TLC invariant violations; 3,515 states generated, 925 distinct states.
+- `audit/formal/CoreReplay.cfg`: no TLC invariant violations; 42,793 states generated, 5,905 distinct states.
+- `audit/formal/TypeSemantics.cfg`: no TLC invariant violations; 924,305 states generated, 181,804 distinct states.
 - Invariants checked: type safety, convergence after network quiescence, and no own-origin in-flight messages.
 
 Simulator:
 - `audit/sim/mm_sim.py --runs 2000 --steps 80`: no convergence failures after draining the network.
-- Simulator now models `SET`, `MSET`, single-key `DEL`, duplicate delivery, own-origin drops, rejected `INCR`, and rejected unsupported/partial commands.
+- Simulator now models `SET`, `MSET`, single-key `DEL`, duplicate delivery, partitions/heal, restart with optional dedupe loss, own-origin drops, rejected `INCR`, and rejected unsupported/partial commands.
 
 ## Fixed Locally
 
@@ -85,23 +89,28 @@ Shortest divergence shape:
 3. Key-level MVCC can reject the stale incoming delta on one side, but the already-applied local field/member remains on the other side. The datasets can quiesce with different object contents.
 
 Fix:
-- `src/replication.c` now uses an explicit replay allowlist.
-- Current allowlist is `SET`, `MSET`, single-key `DEL`, and internal `MVCCRESTORE`.
+- `src/replication.c` now uses an explicit command semantics classifier matching `audit/COMMAND_MATRIX.md`.
+- Current supported state is `SET`, `MSET`, single-key `DEL`, and internal/debug `MVCCRESTORE`.
 - Regression tests assert `HSET`, `ZADD`, `SADD`, `LPUSH`, `RENAME`, and multi-key `DEL` are rejected before mutation.
+
+### 4. Internal MVCC Restore Was Exposed To Normal Clients
+
+Pre-fix behavior: `MVCCRESTORE` was registered as a dangerous write command but callable by normal clients with sufficient ACL permission.
+
+Fix:
+- `MVCCRESTORE` is now rejected for normal clients unless `active-replica-debug-commands yes` is explicitly enabled.
+- RREPLAY payload execution still works because replay uses a fake/internal client.
+- INFO replication exposes `active_replica_debug_commands` so the unsafe debug surface is visible.
 
 ## Open Risks
 
 ### MVCC Clock Persistence Cap
 
-`mvcc-rdb-clock-max-entries` caps persisted key clocks. Older keys beyond the cap can lose stale-write protection after restart. The existing test demonstrates that omitted older clocks can allow stale `MVCCRESTORE` data to win after reload. This is a design tradeoff only if the feature explicitly promises best-effort stale protection; otherwise it is a correctness risk.
+`mvcc-rdb-clock-max-entries` can cap persisted key clocks if configured to a positive value. The production default is now `0` (unlimited) so correctness-critical metadata is not silently dropped by default. The cap remains a debug/operational escape hatch and still degrades stale-write protection when deliberately enabled.
 
 ### AOF-Only Restart Semantics
 
 The audit focused on RDB AUX metadata. AOF-only and AOF rewrite behavior still need direct testing. If the dataset is replayed without the corresponding MVCC/dedupe metadata, stale replay protection can be weaker after restart.
-
-### Internal Command Exposure
-
-`RREPLAY` rejects normal clients in command code, but `MVCCRESTORE` is registered as a dangerous write command and is callable by clients with sufficient ACL permission. That may be acceptable for a debugging/internal command, but it should be treated as public surface until it is gated to replication/internal callers or explicitly documented.
 
 ### Replay ACK And Queue Semantics
 
@@ -137,5 +146,7 @@ make -j$(sysctl -n hw.ncpu)
 ./runtest --single integration/replication-multimaster-topologies
 java -jar audit/formal/tla2tools.jar -deadlock -config audit/formal/MultiMaster-supported.cfg audit/formal/MultiMaster.tla
 java -jar audit/formal/tla2tools.jar -deadlock -config audit/formal/MultiMaster-unsupported.cfg audit/formal/MultiMaster.tla
+java -jar audit/formal/tla2tools.jar -deadlock -config audit/formal/CoreReplay.cfg audit/formal/CoreReplay.tla
+java -jar audit/formal/tla2tools.jar -deadlock -config audit/formal/TypeSemantics.cfg audit/formal/TypeSemantics.tla
 audit/sim/mm_sim.py --runs 2000 --steps 80
 ```

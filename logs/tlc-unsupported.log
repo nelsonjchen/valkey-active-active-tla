@@ -1,15 +1,15 @@
 TLC2 Version 2026.05.04.141011 (rev: 2097138)
 Warning: Please run the Java VM, which executes TLC with a throughput optimized garbage collector, by passing the "-XX:+UseParallelGC" property.
 (Use the -nowarning option to disable this warning.)
-Running breadth-first search Model-Checking with fp 13 and seed -8161564707302919156 with 1 worker on 14 cores with 6144MB heap and 64MB offheap memory [pid: 13319] (Mac OS X 26.4.1 aarch64, Amazon.com Inc. 21.0.6 64bit, MSBDiskFPSet, DiskStateQueue).
+Running breadth-first search Model-Checking with fp 121 and seed 2556419443061771408 with 1 worker on 14 cores with 6144MB heap and 64MB offheap memory [pid: 90141] (Mac OS X 26.4.1 aarch64, Amazon.com Inc. 21.0.6 64bit, MSBDiskFPSet, DiskStateQueue).
 Parsing file /Users/nelson/code/valkey-active-active/audit/formal/MultiMaster.tla
-Parsing file /private/var/folders/0y/dykynjfd6hb0rg77dzjnyz7m0000gn/T/tlc-6257853100114066404/Naturals.tla (jar:file:/Users/nelson/code/valkey-active-active/audit/formal/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
-Parsing file /private/var/folders/0y/dykynjfd6hb0rg77dzjnyz7m0000gn/T/tlc-6257853100114066404/FiniteSets.tla (jar:file:/Users/nelson/code/valkey-active-active/audit/formal/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
-Parsing file /private/var/folders/0y/dykynjfd6hb0rg77dzjnyz7m0000gn/T/tlc-6257853100114066404/TLC.tla (jar:file:/Users/nelson/code/valkey-active-active/audit/formal/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
-Parsing file /private/var/folders/0y/dykynjfd6hb0rg77dzjnyz7m0000gn/T/tlc-6257853100114066404/_TLCTrace.tla (jar:file:/Users/nelson/code/valkey-active-active/audit/formal/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
-Parsing file /private/var/folders/0y/dykynjfd6hb0rg77dzjnyz7m0000gn/T/tlc-6257853100114066404/Sequences.tla (jar:file:/Users/nelson/code/valkey-active-active/audit/formal/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
-Parsing file /private/var/folders/0y/dykynjfd6hb0rg77dzjnyz7m0000gn/T/tlc-6257853100114066404/TLCExt.tla (jar:file:/Users/nelson/code/valkey-active-active/audit/formal/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
-Parsing file /private/var/folders/0y/dykynjfd6hb0rg77dzjnyz7m0000gn/T/tlc-6257853100114066404/Integers.tla (jar:file:/Users/nelson/code/valkey-active-active/audit/formal/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Parsing file /private/var/folders/0y/dykynjfd6hb0rg77dzjnyz7m0000gn/T/tlc-17540534239541171301/Naturals.tla (jar:file:/Users/nelson/code/valkey-active-active/audit/formal/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /private/var/folders/0y/dykynjfd6hb0rg77dzjnyz7m0000gn/T/tlc-17540534239541171301/FiniteSets.tla (jar:file:/Users/nelson/code/valkey-active-active/audit/formal/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /private/var/folders/0y/dykynjfd6hb0rg77dzjnyz7m0000gn/T/tlc-17540534239541171301/TLC.tla (jar:file:/Users/nelson/code/valkey-active-active/audit/formal/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /private/var/folders/0y/dykynjfd6hb0rg77dzjnyz7m0000gn/T/tlc-17540534239541171301/_TLCTrace.tla (jar:file:/Users/nelson/code/valkey-active-active/audit/formal/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /private/var/folders/0y/dykynjfd6hb0rg77dzjnyz7m0000gn/T/tlc-17540534239541171301/Sequences.tla (jar:file:/Users/nelson/code/valkey-active-active/audit/formal/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /private/var/folders/0y/dykynjfd6hb0rg77dzjnyz7m0000gn/T/tlc-17540534239541171301/TLCExt.tla (jar:file:/Users/nelson/code/valkey-active-active/audit/formal/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Parsing file /private/var/folders/0y/dykynjfd6hb0rg77dzjnyz7m0000gn/T/tlc-17540534239541171301/Integers.tla (jar:file:/Users/nelson/code/valkey-active-active/audit/formal/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
 Semantic processing of module Naturals
 Semantic processing of module Sequences
 Semantic processing of module FiniteSets
@@ -21,9 +21,9 @@ Semantic processing of module MultiMaster
 Linting of module TLCExt
 Linting of module _TLCTrace
 Linting of module MultiMaster
-Starting... (2026-05-06 19:22:39)
+Starting... (2026-05-06 21:31:00)
 Computing initial states...
-Finished computing initial states: 1 distinct state generated at 2026-05-06 19:22:39.
+Finished computing initial states: 1 distinct state generated at 2026-05-06 21:31:00.
 Model checking completed. No error has been found.
   Estimates of the probability that TLC did not check all reachable states
   because two distinct states had the same fingerprint:
@@ -31,4 +31,4 @@ Model checking completed. No error has been found.
 3515 states generated, 925 distinct states found, 0 states left on queue.
 The depth of the complete state graph search is 9.
 The average outdegree of the complete state graph is 1 (minimum is 0, the maximum 7 and the 95th percentile is 4).
-Finished in 00s at (2026-05-06 19:22:39)
+Finished in 00s at (2026-05-06 21:31:00)

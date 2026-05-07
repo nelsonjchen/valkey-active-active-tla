@@ -7,6 +7,7 @@ The simulator mirrors the branch's command-level RREPLAY/MVCC shape:
 - seen replay ids make duplicate delivery idempotent;
 - unsupported, lossy RMW, and partial collection operations are rejected before
   local mutation.
+- partitions queue frames until reconnect, and restarts can clear dedupe state.
 
 It is deliberately not a Redis emulator. Its job is to search protocol-level
 traces and expose where convergence differs from stronger user expectations.
@@ -59,6 +60,8 @@ class Sim:
         self.rng = random.Random(seed)
         self.nodes = {name: Node(name) for name in nodes}
         self.net: List[Tuple[str, Frame]] = []
+        self.link_up = {(src, dst): True for src in nodes for dst in nodes if src != dst}
+        self.pending: Dict[Tuple[str, str], List[Frame]] = {(src, dst): [] for src in nodes for dst in nodes if src != dst}
         self.history: List[str] = []
 
     def better(self, incoming: Meta, current: Meta) -> bool:
@@ -92,7 +95,11 @@ class Sim:
     def fanout(self, src: str, frame: Frame) -> None:
         for dst in self.nodes:
             if dst != src:
-                self.net.append((dst, frame))
+                if self.link_up[(src, dst)]:
+                    self.net.append((dst, frame))
+                else:
+                    self.pending[(src, dst)].append(frame)
+                    self.history.append(f"queue {frame.op} {frame.origin}/{frame.rid} for down link {src}->{dst}")
 
     def local_set(self, src: str, key: Key, value: Value) -> None:
         n = self.nodes[src]
@@ -163,6 +170,34 @@ class Sim:
         self.net.append(self.rng.choice(self.net))
         self.history.append("duplicated one in-flight frame")
 
+    def partition(self, src: str, dst: str) -> None:
+        if src == dst:
+            return
+        self.link_up[(src, dst)] = False
+        self.history.append(f"partition {src}->{dst}")
+
+    def heal(self, src: str, dst: str) -> None:
+        if src == dst:
+            return
+        self.link_up[(src, dst)] = True
+        queued = self.pending[(src, dst)]
+        for frame in queued:
+            self.net.append((dst, frame))
+        if queued:
+            self.history.append(f"heal {src}->{dst}: flushed {len(queued)} frames")
+        self.pending[(src, dst)] = []
+
+    def heal_all(self) -> None:
+        for src, dst in list(self.link_up):
+            self.heal(src, dst)
+
+    def restart(self, node: str, persist_dedupe: bool = False) -> None:
+        n = self.nodes[node]
+        if not persist_dedupe:
+            n.seen.clear()
+        n.clock = max([m.ts for m in n.meta.values()], default=n.clock)
+        self.history.append(f"restart {node}: dedupe={'kept' if persist_dedupe else 'cleared'}")
+
     def drain(self) -> None:
         while self.net:
             self.deliver_one()
@@ -214,7 +249,7 @@ def randomized_supported(seed: int, runs: int, steps: int) -> dict:
     for run in range(runs):
         sim = Sim(seed=seed + run)
         for _ in range(steps):
-            op = sim.rng.choice(["SET", "MSET", "DEL", "INCR", "DELIVER", "DUP"])
+            op = sim.rng.choice(["SET", "MSET", "DEL", "INCR", "DELIVER", "DUP", "PARTITION", "HEAL", "RESTART"])
             node = sim.rng.choice(list(sim.nodes))
             if op == "SET":
                 sim.local_set(node, sim.rng.choice(["x", "y"]), sim.rng.choice(["v1", "v2", "v3"]))
@@ -226,8 +261,17 @@ def randomized_supported(seed: int, runs: int, steps: int) -> dict:
                 sim.local_incr(node, "ctr")
             elif op == "DUP":
                 sim.duplicate_random_frame()
+            elif op == "PARTITION":
+                peer = sim.rng.choice([n for n in sim.nodes if n != node])
+                sim.partition(node, peer)
+            elif op == "HEAL":
+                peer = sim.rng.choice([n for n in sim.nodes if n != node])
+                sim.heal(node, peer)
+            elif op == "RESTART":
+                sim.restart(node, persist_dedupe=sim.rng.choice([False, True]))
             else:
                 sim.deliver_one()
+        sim.heal_all()
         sim.drain()
         if not sim.converged():
             failures.append({"run": run, "history": sim.history, "state": {k: n.data for k, n in sim.nodes.items()}})
