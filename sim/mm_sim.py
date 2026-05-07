@@ -53,15 +53,19 @@ class Node:
     data: Dict[Key, Value] = field(default_factory=dict)
     meta: Dict[Key, Meta] = field(default_factory=dict)
     seen: set[Tuple[str, int]] = field(default_factory=set)
+    seen_order: List[Tuple[str, int]] = field(default_factory=list)
 
 
 class Sim:
-    def __init__(self, nodes: Tuple[str, ...] = ("A", "B", "C"), seed: int = 0):
+    def __init__(self, nodes: Tuple[str, ...] = ("A", "B", "C"), seed: int = 0, pending_cap: int = 20, dedupe_cap: int = 10000):
         self.rng = random.Random(seed)
         self.nodes = {name: Node(name) for name in nodes}
         self.net: List[Tuple[str, Frame]] = []
         self.link_up = {(src, dst): True for src in nodes for dst in nodes if src != dst}
         self.pending: Dict[Tuple[str, str], List[Frame]] = {(src, dst): [] for src in nodes for dst in nodes if src != dst}
+        self.repair_required = {(src, dst): False for src in nodes for dst in nodes if src != dst}
+        self.pending_cap = pending_cap
+        self.dedupe_cap = dedupe_cap
         self.history: List[str] = []
 
     def better(self, incoming: Meta, current: Meta) -> bool:
@@ -95,13 +99,42 @@ class Sim:
     def fanout(self, src: str, frame: Frame) -> None:
         for dst in self.nodes:
             if dst != src:
+                if self.repair_required[(src, dst)]:
+                    self.history.append(f"drop incremental {frame.op} {frame.origin}/{frame.rid} while {src}->{dst} needs manual repair")
+                    continue
                 if self.link_up[(src, dst)]:
                     self.net.append((dst, frame))
                 else:
                     self.pending[(src, dst)].append(frame)
                     self.history.append(f"queue {frame.op} {frame.origin}/{frame.rid} for down link {src}->{dst}")
+                    if len(self.pending[(src, dst)]) > self.pending_cap:
+                        self.pending[(src, dst)].clear()
+                        self.repair_required[(src, dst)] = True
+                        self.history.append(f"overflow {src}->{dst}: require manual repair")
+
+    def can_fanout(self, src: str) -> bool:
+        for dst in self.nodes:
+            if dst == src:
+                continue
+            if self.repair_required[(src, dst)]:
+                return False
+            if len(self.pending[(src, dst)]) >= self.pending_cap:
+                return False
+        return True
+
+    def remember_seen(self, n: Node, dedupe: Tuple[str, int]) -> None:
+        if dedupe in n.seen:
+            return
+        n.seen.add(dedupe)
+        n.seen_order.append(dedupe)
+        while len(n.seen_order) > self.dedupe_cap:
+            old = n.seen_order.pop(0)
+            n.seen.discard(old)
 
     def local_set(self, src: str, key: Key, value: Value) -> None:
+        if not self.can_fanout(src):
+            self.history.append(f"{src}: SET {key} rejected before local mutation because replay queue is capped")
+            return
         n = self.nodes[src]
         meta = self.stamp(n)
         self.apply_abs(n, key, value, meta)
@@ -110,6 +143,9 @@ class Sim:
         self.history.append(f"{src}: SET {key}={value} ts={meta.ts}/{meta.rid}")
 
     def local_mset(self, src: str, items: Dict[Key, Value]) -> None:
+        if not self.can_fanout(src):
+            self.history.append(f"{src}: MSET rejected before local mutation because replay queue is capped")
+            return
         n = self.nodes[src]
         meta = self.stamp(n)
         for key, value in items.items():
@@ -119,6 +155,9 @@ class Sim:
         self.history.append(f"{src}: MSET {items} ts={meta.ts}/{meta.rid}")
 
     def local_del(self, src: str, key: Key) -> None:
+        if not self.can_fanout(src):
+            self.history.append(f"{src}: DEL {key} rejected before local mutation because replay queue is capped")
+            return
         n = self.nodes[src]
         meta = self.stamp(n)
         self.apply_del(n, key, meta)
@@ -143,7 +182,7 @@ class Sim:
         if dedupe in n.seen:
             self.history.append(f"deliver duplicate {frame.origin}/{frame.rid} to {dst}: ignored")
             return
-        n.seen.add(dedupe)
+        self.remember_seen(n, dedupe)
         if frame.origin == dst:
             self.history.append(f"deliver own-origin {frame.origin}/{frame.rid} to {dst}: ignored")
             return
@@ -180,6 +219,10 @@ class Sim:
         if src == dst:
             return
         self.link_up[(src, dst)] = True
+        if self.repair_required[(src, dst)]:
+            self.pending[(src, dst)] = []
+            self.history.append(f"heal {src}->{dst}: still requires manual repair")
+            return
         queued = self.pending[(src, dst)]
         for frame in queued:
             self.net.append((dst, frame))
@@ -195,6 +238,7 @@ class Sim:
         n = self.nodes[node]
         if not persist_dedupe:
             n.seen.clear()
+            n.seen_order.clear()
         n.clock = max([m.ts for m in n.meta.values()], default=n.clock)
         self.history.append(f"restart {node}: dedupe={'kept' if persist_dedupe else 'cleared'}")
 
@@ -239,6 +283,42 @@ def unsupported_counterexample() -> dict:
     return {
         "name": "unsupported and partial commands are rejected before local mutation",
         "values": sim.values_by_node("stream"),
+        "converged": sim.converged(),
+        "history": sim.history,
+    }
+
+
+def dedupe_eviction_stale_replay() -> dict:
+    sim = Sim(nodes=("A", "B"), seed=3, dedupe_cap=3)
+    sim.local_set("A", "k", "stale")
+    old = sim.net[0]
+    sim.deliver_one(0)
+    sim.local_set("A", "k", "fresh")
+    sim.deliver_one(0)
+    for i in range(4):
+        sim.local_set("A", f"noise:{i}", f"v{i}")
+        sim.deliver_one(0)
+    sim.net.append(old)
+    sim.deliver_one(len(sim.net) - 1)
+    return {
+        "name": "dedupe eviction still leaves stale replay rejected by MVCC",
+        "values": sim.values_by_node("k"),
+        "converged": sim.converged(),
+        "history": sim.history,
+    }
+
+
+def queue_cap_fail_closed() -> dict:
+    sim = Sim(nodes=("A", "B"), seed=4, pending_cap=2)
+    sim.partition("A", "B")
+    sim.local_set("A", "k1", "v1")
+    sim.local_set("A", "k2", "v2")
+    sim.local_set("A", "k3", "v3")
+    sim.heal("A", "B")
+    sim.drain()
+    return {
+        "name": "queue cap rejects before local mutation and drains after reconnect",
+        "values": {key: sim.values_by_node(key) for key in ("k1", "k2", "k3")},
         "converged": sim.converged(),
         "history": sim.history,
     }
@@ -296,6 +376,8 @@ def main() -> None:
         randomized_supported(args.seed, args.runs, args.steps),
         rmw_rejection(),
         unsupported_counterexample(),
+        dedupe_eviction_stale_replay(),
+        queue_cap_fail_closed(),
     ]
     print(json.dumps(results, indent=2, sort_keys=True))
 

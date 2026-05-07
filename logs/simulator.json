@@ -2,9 +2,9 @@
   {
     "failures": [],
     "name": "randomized supported-command convergence",
-    "runs": 2000,
+    "runs": 10000,
     "seed": 20260506,
-    "steps_per_run": 80
+    "steps_per_run": 150
   },
   {
     "converged": true,
@@ -30,6 +30,58 @@
     "values": {
       "A": null,
       "B": null
+    }
+  },
+  {
+    "converged": true,
+    "history": [
+      "A: SET k=stale ts=1/1",
+      "deliver SET k=stale A/1 to B: apply",
+      "A: SET k=fresh ts=2/2",
+      "deliver SET k=fresh A/2 to B: apply",
+      "A: SET noise:0=v0 ts=3/3",
+      "deliver SET noise:0=v0 A/3 to B: apply",
+      "A: SET noise:1=v1 ts=4/4",
+      "deliver SET noise:1=v1 A/4 to B: apply",
+      "A: SET noise:2=v2 ts=5/5",
+      "deliver SET noise:2=v2 A/5 to B: apply",
+      "A: SET noise:3=v3 ts=6/6",
+      "deliver SET noise:3=v3 A/6 to B: apply",
+      "deliver SET k=stale A/1 to B: stale"
+    ],
+    "name": "dedupe eviction still leaves stale replay rejected by MVCC",
+    "values": {
+      "A": "fresh",
+      "B": "fresh"
+    }
+  },
+  {
+    "converged": true,
+    "history": [
+      "partition A->B",
+      "queue SET A/1 for down link A->B",
+      "A: SET k1=v1 ts=1/1",
+      "queue SET A/2 for down link A->B",
+      "A: SET k2=v2 ts=2/2",
+      "A: SET k3 rejected before local mutation because replay queue is capped",
+      "heal A->B: flushed 2 frames",
+      "deliver SET k1=v1 A/1 to B: apply",
+      "deliver SET k2=v2 A/2 to B: apply"
+    ],
+    "name": "queue cap rejects before local mutation and drains after reconnect",
+    "values": {
+      "k1": {
+        "A": "v1",
+        "B": "v1"
+      },
+      "k2": {
+        "A": "v2",
+        "B": "v2"
+      },
+      "k3": {
+        "A": null,
+        "B": null
+      }
     }
   }
 ]

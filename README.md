@@ -11,7 +11,7 @@ Reviewed Valkey branches:
 - `formal/MultiMaster.tla`: small TLA+ model of supported active/active replay semantics.
 - `formal/MultiMaster-supported.cfg`: TLC config for supported `SET`, `MSET`, and single-key `DEL` behavior.
 - `formal/MultiMaster-unsupported.cfg`: TLC config where unsupported/RMW/partial writes are rejected before mutation.
-- `formal/CoreReplay.tla`: TLA+ model of replay ids, dedupe, disconnect/reconnect, ACK, pending queues, and fullsync.
+- `formal/CoreReplay.tla`: TLA+ model of replay ids, dedupe, disconnect/reconnect, ACK monotonicity, pending queues, and fail-closed queue caps.
 - `formal/TypeSemantics.tla`: TLA+ target model for LWW registers, counters, hash fields, and OR-set style metadata.
 - `formal/Persistence.tla`: focused restart model for RDB/AOF metadata persistence and stale replay rejection.
 - `sim/mm_sim.py`: randomized discrete-event simulator for larger replay/dedupe traces.
@@ -29,7 +29,7 @@ java -jar tla2tools.jar -deadlock -config formal/MultiMaster-unsupported.cfg for
 java -jar tla2tools.jar -deadlock -config formal/CoreReplay.cfg formal/CoreReplay.tla
 java -jar tla2tools.jar -deadlock -config formal/TypeSemantics.cfg formal/TypeSemantics.tla
 java -jar tla2tools.jar -deadlock -config formal/Persistence.cfg formal/Persistence.tla
-sim/mm_sim.py --runs 2000 --steps 80
+sim/mm_sim.py --runs 10000 --steps 150
 ```
 
 The checked model is intentionally small. It is evidence for the narrowed protocol shape, not a proof of the full Valkey implementation.

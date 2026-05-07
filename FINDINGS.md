@@ -1,6 +1,6 @@
 # bet0x Valkey Active/Active Audit Report
 
-Date: 2026-05-06
+Date: 2026-05-07
 
 ## Scope
 
@@ -13,7 +13,7 @@ The reviewed implementation adds active/active replication controls, `REPLICAOF 
 
 ## Current Result
 
-The rebased branch builds and the focused active/active suites pass after local fixes. This pass adds the first productionization guardrails: an explicit command semantics matrix, debug-only access to `MVCCRESTORE`, unlimited MVCC RDB clock persistence by default, a requirement that active/active mode keep AOF RDB preambles enabled, and layered TLA+ specs for core replay and future typed merge semantics.
+The rebased branch builds and the focused active/active suites pass after local fixes. This pass adds the first productionization guardrails: an explicit command semantics matrix, debug-only access to `MVCCRESTORE` and `RREPLAYACK`, unlimited MVCC RDB clock persistence by default, a requirement that active/active mode keep AOF RDB preambles enabled, hardened ACK handling, fail-closed replay queue caps, and layered TLA+ specs for core replay and future typed merge semantics.
 
 The correctness envelope is still deliberately narrow:
 - Allowed local/replay writes: `SET`, `MSET`, single-key `DEL`, and internal `MVCCRESTORE`.
@@ -30,27 +30,24 @@ Focused tests:
 
 | Test | Result |
 | --- | --- |
-| `unit/rreplay` | 3 passed, 0 failed |
-| `integration/replication-multimaster-aof` | 3 passed, 0 failed |
-| `integration/replication-multimaster-rreplay` | 20 passed, 0 failed |
+| `unit/rreplay` | 4 passed, 0 failed |
+| `integration/replication-multimaster-aof` | 4 passed, 0 failed |
+| `integration/replication-multimaster-rreplay` | 21 passed, 0 failed |
 | `integration/replication-multimaster` | 14 passed, 0 failed |
-| `integration/replication-multimaster-upstreams` | 11 passed, 0 failed |
+| `integration/replication-multimaster-upstreams` | 12 passed, 0 failed |
 | `integration/replication-multimaster-topologies` | 9 passed, 0 failed |
-| `integration/replication-active` | 5 passed, 0 failed |
-| `integration/multimaster-psync` | 4 passed, 0 failed |
-| `integration/psync2-reg-multimaster` | 5 passed, 0 failed |
 
 Formal/model checks:
 - `audit/formal/MultiMaster-supported.cfg`: no TLC invariant violations; 5,510,617 states generated, 1,167,907 distinct states.
 - `audit/formal/MultiMaster-unsupported.cfg`: no TLC invariant violations; 3,515 states generated, 925 distinct states.
-- `audit/formal/CoreReplay.cfg`: no TLC invariant violations; 42,793 states generated, 5,905 distinct states.
+- `audit/formal/CoreReplay.cfg`: no TLC invariant violations; 55,631 states generated, 5,905 distinct states.
 - `audit/formal/TypeSemantics.cfg`: no TLC invariant violations; 924,305 states generated, 181,804 distinct states.
 - `audit/formal/Persistence.cfg`: no TLC invariant violations; 6 states generated, 6 distinct states.
-- Invariants checked: type safety, convergence after network quiescence, and no own-origin in-flight messages.
+- Invariants checked: type safety, convergence after network quiescence, no own-origin in-flight messages, ACK monotonicity, no impossible ACK progress, and bounded replay queues.
 
 Simulator:
-- `audit/sim/mm_sim.py --runs 2000 --steps 80`: no convergence failures after draining the network.
-- Simulator now models `SET`, `MSET`, single-key `DEL`, duplicate delivery, partitions/heal, restart with optional dedupe loss, own-origin drops, rejected `INCR`, and rejected unsupported/partial commands.
+- `audit/sim/mm_sim.py --runs 10000 --steps 150`: no convergence failures after draining the network.
+- Simulator now models `SET`, `MSET`, single-key `DEL`, duplicate delivery, partitions/heal, restart with optional dedupe loss, own-origin drops, rejected `INCR`, rejected unsupported/partial commands, dedupe eviction with MVCC freshness fallback, and replay queue cap rejection.
 
 ## Fixed Locally
 
@@ -139,23 +136,60 @@ Fix:
 - Supported writes replayed from an incremental AOF tail are MVCC-stamped during AOF load when active/active is configured.
 - Regression coverage restarts from an AOF RDB preamble and verifies stale `MVCCRESTORE` payloads are rejected for base-file data, post-rewrite incremental AOF tail data, multi-key `MSET`, and single-key `DEL` tombstones.
 
+### 8. Replay ACKs Could Advance On Stale Or Impossible IDs
+
+Bug found during ACK hardening: peer integer replies were treated as progress without validating that the ACK id was newer, within the sent range, and matched the first pending replay frame. A duplicate or impossible ACK could therefore move `replay_last_acked_id` or pop a pending frame that had not actually been acknowledged.
+
+Fix:
+- `upstreamRuntimeTrackReplayAck` now classifies ACKs as applied, stale, impossible, or out-of-order.
+- Duplicate/stale ACK ids do not advance state.
+- ACK ids greater than `replay_last_sent_id` are logged and ignored.
+- Queue-backed peer links require the ACK to match the first pending replay id before draining the queue.
+- `RREPLAYACK` is debug-gated and used by tests to inject stale and impossible ACK ids without exposing the control to normal clients.
+
+### 9. Older Active/Active AOF Tails Could Load Now-Rejected Commands
+
+Bug found during persistence coverage: AOF loading calls command implementations directly and bypasses the normal client command gate. An older active/active AOF tail containing a command that is now rejected, for example `HSET`, could mutate the dataset during restart before the active/active allowlist was consulted.
+
+Fix:
+- AOF load now checks active/active write commands before execution.
+- Supported durable commands (`SET`, `MSET`, single-key `DEL`, and internal `MVCCRESTORE`) still load.
+- Unsupported active/active writes fail the load before mutation.
+- Regression coverage constructs an AOF tail with `HSET` and asserts the server exits instead of loading it.
+
+### 10. Queue Overflow Full Sync Could Overwrite Concurrent Local Writes
+
+Bug found by the simulator during this pass. The earlier queue overflow behavior dropped pending frames and asked the peer to perform an ordinary full sync from the sender. In active/active mode, ordinary full sync is not a merge. It can replace a peer's dataset and wipe a write that was accepted locally on that peer while the replay link was partitioned.
+
+Shortest simulator trace shape:
+1. A and B are partitioned.
+2. A accepts a local write while B's queue toward A later overflows.
+3. B requests/forces A to full-sync from B.
+4. A's local write is overwritten because the full sync copies B's dataset rather than applying MVCC merge semantics.
+
+Fix:
+- Local active/active writes now fail before mutation when any replay queue is at its configured cap or a runtime is already marked as requiring repair.
+- The automatic peer `REPLICAOF` full-sync request after overflow is disabled and replaced with a warning that manual repair is required.
+- The topology regression now fills the queue to the cap, verifies the next write is rejected before mutation, reconnects the peer, drains the queued frames, and verifies writes resume only after the queue is clear.
+- The simulator's deterministic queue-cap scenario now shows the capped write rejected on both nodes, and the 10,000-run randomized search no longer reproduces the overwrite counterexample.
+
 ## Open Risks
 
 ### MVCC Clock Persistence Cap
 
 `mvcc-rdb-clock-max-entries` can cap persisted key clocks if configured to a positive value. The production default is now `0` (unlimited), and positive caps in `multi-master` mode require `active-replica-debug-commands yes`. The cap remains a debug/operational escape hatch and still degrades stale-write protection when deliberately enabled.
 
-### AOF Rewrite And Restart Semantics
+### Interrupted AOF Rewrite And Restart Semantics
 
-The new AOF regression covers supported `SET` writes in both the RDB base file and the incremental AOF tail, plus multi-key `MSET` and single-key `DEL` tombstones in the incremental tail. Broader AOF fault tests are still needed for interrupted rewrites and older AOF files containing commands that are now rejected in active/active mode.
+The new AOF regression covers supported `SET` writes in both the RDB base file and the incremental AOF tail, plus multi-key `MSET`, single-key `DEL` tombstones, and older AOF tails containing now-rejected writes. Broader AOF fault tests are still needed for interrupted rewrites and torn persistence around OS/process failure boundaries.
 
-### Replay ACK And Queue Semantics
+### Queue Repair After Cap Exhaustion
 
-The replay queue has focused tests for drain and overflow/fullsync request behavior, but ACK handling is still delicate. The implementation advances `replay_last_acked_id` from peer integer replies and drains pending replay frames in FIFO order. A stronger design should specify behavior for duplicate ACKs, unexpected ACK ids, reconnect races, and fullsync requests while new writes arrive.
+Queue caps now fail closed instead of silently dropping frames or forcing an unsafe ordinary full sync. That avoids the data-loss counterexample, but it leaves availability and operator workflow open: once a runtime is marked repair-required by an unexpected overflow path, active/active writes are rejected until manual repair or a future merge-aware resync mechanism exists.
 
 ### Dedupe Bound
 
-`RREPLAY_DEDUP_MAX_ENTRIES` is fixed at 10,000 entries. This bounds memory but means old duplicate frames can be accepted again after eviction. MVCC freshness usually protects values, but this should be documented as bounded idempotence, not permanent dedupe.
+`RREPLAY_DEDUP_MAX_ENTRIES` is fixed at 10,000 entries. This bounds memory but means old duplicate frames can be accepted again after eviction. A new regression and simulator scenario verify that MVCC freshness prevents value rollback for stale `SET` after dedupe eviction, but this remains bounded idempotence, not permanent dedupe.
 
 ### Upstream Readiness
 
@@ -181,10 +215,11 @@ make -j$(sysctl -n hw.ncpu)
 ./runtest --single integration/replication-multimaster
 ./runtest --single integration/replication-multimaster-upstreams
 ./runtest --single integration/replication-multimaster-topologies
+./runtest --single integration/replication-multimaster-aof
 java -jar audit/formal/tla2tools.jar -deadlock -config audit/formal/MultiMaster-supported.cfg audit/formal/MultiMaster.tla
 java -jar audit/formal/tla2tools.jar -deadlock -config audit/formal/MultiMaster-unsupported.cfg audit/formal/MultiMaster.tla
 java -jar audit/formal/tla2tools.jar -deadlock -config audit/formal/CoreReplay.cfg audit/formal/CoreReplay.tla
 java -jar audit/formal/tla2tools.jar -deadlock -config audit/formal/TypeSemantics.cfg audit/formal/TypeSemantics.tla
 java -jar audit/formal/tla2tools.jar -deadlock -config audit/formal/Persistence.cfg audit/formal/Persistence.tla
-audit/sim/mm_sim.py --runs 2000 --steps 80
+audit/sim/mm_sim.py --runs 10000 --steps 150
 ```
