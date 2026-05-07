@@ -1,0 +1,5 @@
+tla2tools.jar
+states/
+*.class
+*.bin
+.DS_Store

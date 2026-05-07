@@ -1,0 +1,35 @@
+[
+  {
+    "failures": [],
+    "name": "randomized supported-command convergence",
+    "runs": 2000,
+    "seed": 20260506,
+    "steps_per_run": 80
+  },
+  {
+    "converged": true,
+    "history": [
+      "A: INCR ctr rejected before local mutation",
+      "B: INCR ctr rejected before local mutation"
+    ],
+    "name": "concurrent INCR attempts are rejected before local mutation",
+    "values": {
+      "A": null,
+      "B": null
+    }
+  },
+  {
+    "converged": true,
+    "history": [
+      "A: unsupported XADD stream=entry-1 rejected before local mutation",
+      "B: unsupported HSET hash=field=value rejected before local mutation",
+      "A: unsupported ZADD zset=member=1 rejected before local mutation",
+      "B: unsupported RENAME rename-src=rename-dst rejected before local mutation"
+    ],
+    "name": "unsupported and partial commands are rejected before local mutation",
+    "values": {
+      "A": null,
+      "B": null
+    }
+  }
+]
