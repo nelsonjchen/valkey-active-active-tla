@@ -143,7 +143,7 @@ Fix:
 
 ### MVCC Clock Persistence Cap
 
-`mvcc-rdb-clock-max-entries` can cap persisted key clocks if configured to a positive value. The production default is now `0` (unlimited) so correctness-critical metadata is not silently dropped by default. The cap remains a debug/operational escape hatch and still degrades stale-write protection when deliberately enabled.
+`mvcc-rdb-clock-max-entries` can cap persisted key clocks if configured to a positive value. The production default is now `0` (unlimited), and positive caps in `multi-master` mode require `active-replica-debug-commands yes`. The cap remains a debug/operational escape hatch and still degrades stale-write protection when deliberately enabled.
 
 ### AOF Rewrite And Restart Semantics
 
