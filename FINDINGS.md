@@ -31,6 +31,7 @@ Focused tests:
 | Test | Result |
 | --- | --- |
 | `unit/rreplay` | 3 passed, 0 failed |
+| `integration/replication-multimaster-aof` | 3 passed, 0 failed |
 | `integration/replication-multimaster-rreplay` | 20 passed, 0 failed |
 | `integration/replication-multimaster` | 14 passed, 0 failed |
 | `integration/replication-multimaster-upstreams` | 11 passed, 0 failed |
@@ -44,6 +45,7 @@ Formal/model checks:
 - `audit/formal/MultiMaster-unsupported.cfg`: no TLC invariant violations; 3,515 states generated, 925 distinct states.
 - `audit/formal/CoreReplay.cfg`: no TLC invariant violations; 42,793 states generated, 5,905 distinct states.
 - `audit/formal/TypeSemantics.cfg`: no TLC invariant violations; 924,305 states generated, 181,804 distinct states.
+- `audit/formal/Persistence.cfg`: no TLC invariant violations; 6 states generated, 6 distinct states.
 - Invariants checked: type safety, convergence after network quiescence, and no own-origin in-flight messages.
 
 Simulator:
@@ -112,6 +114,31 @@ Fix:
 - `CONFIG SET appendonly yes` also refuses the unsafe combination if the preamble is disabled.
 - Regression coverage asserts the unsafe preamble change is rejected in active/active mode.
 
+### 6. The "Unlimited" MVCC RDB Default Persisted Zero Key Clocks
+
+Bug found during AOF/RDB follow-through: `mvcc-rdb-clock-max-entries 0` was intended to mean unlimited, but the save path initialized the effective cap to `0`. With the production default, RDB/AOF-preamble saves could emit `mvcc-keys-count` without any `mvcc-key-N` entries.
+
+Shortest repro shape:
+1. Enable active/active and write key `k=seed`.
+2. Save/restart with the default `mvcc-rdb-clock-max-entries 0`.
+3. Replay an older serialized value with a low MVCC timestamp.
+4. Without the per-key clock, the stale payload can overwrite the newer value.
+
+Fix:
+- The save path now treats `0` as `mvcc_count`, i.e. no cap.
+- The RDB restart regression now uses a genuinely stale payload with a different value, so missing key-clock metadata fails visibly.
+
+### 7. AOF Rewrite/Load Dropped Active/Active Metadata
+
+Bug found during AOF testing: AOF rewrite called `rdbSaveRio(..., NULL)`, so the RDB preamble omitted active/active AUX metadata. AOF load then called `rdbLoadRio(..., NULL)`, so even present metadata would not be applied. In addition, local active/active writes were only MVCC-stamped when a primary link was connected, leaving disconnected writes untracked.
+
+Fix:
+- AOF rewrite now populates and writes active/active save-info metadata into RDB preambles.
+- AOF load now reads and applies configured upstreams, runtime state, MVCC clocks, and RREPLAY dedupe state from the preamble before replaying the incremental AOF tail.
+- Local active/active writes always enter the RREPLAY/MVCC stamping path, even when peers are absent or disconnected.
+- Supported writes replayed from an incremental AOF tail are MVCC-stamped during AOF load when active/active is configured.
+- Regression coverage restarts from an AOF RDB preamble and verifies stale `MVCCRESTORE` payloads are rejected for both base-file data and post-rewrite incremental AOF tail data.
+
 ## Open Risks
 
 ### MVCC Clock Persistence Cap
@@ -120,7 +147,7 @@ Fix:
 
 ### AOF Rewrite And Restart Semantics
 
-Active/active mode now refuses AOF without an RDB preamble, closing the obvious metadata-loss configuration. Direct AOF rewrite/restart fault tests are still needed to prove that rewritten base files and incremental AOF segments always retain or reconstruct the required MVCC/dedupe metadata.
+The new AOF regression covers supported `SET` writes in both the RDB base file and the incremental AOF tail. Broader AOF fault tests are still needed for multi-key `MSET`, `DEL` tombstones, interrupted rewrites, and older AOF files containing commands that are now rejected in active/active mode.
 
 ### Replay ACK And Queue Semantics
 
@@ -158,5 +185,6 @@ java -jar audit/formal/tla2tools.jar -deadlock -config audit/formal/MultiMaster-
 java -jar audit/formal/tla2tools.jar -deadlock -config audit/formal/MultiMaster-unsupported.cfg audit/formal/MultiMaster.tla
 java -jar audit/formal/tla2tools.jar -deadlock -config audit/formal/CoreReplay.cfg audit/formal/CoreReplay.tla
 java -jar audit/formal/tla2tools.jar -deadlock -config audit/formal/TypeSemantics.cfg audit/formal/TypeSemantics.tla
+java -jar audit/formal/tla2tools.jar -deadlock -config audit/formal/Persistence.cfg audit/formal/Persistence.tla
 audit/sim/mm_sim.py --runs 2000 --steps 80
 ```

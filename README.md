@@ -13,6 +13,7 @@ Reviewed Valkey branches:
 - `formal/MultiMaster-unsupported.cfg`: TLC config where unsupported/RMW/partial writes are rejected before mutation.
 - `formal/CoreReplay.tla`: TLA+ model of replay ids, dedupe, disconnect/reconnect, ACK, pending queues, and fullsync.
 - `formal/TypeSemantics.tla`: TLA+ target model for LWW registers, counters, hash fields, and OR-set style metadata.
+- `formal/Persistence.tla`: focused restart model for RDB/AOF metadata persistence and stale replay rejection.
 - `sim/mm_sim.py`: randomized discrete-event simulator for larger replay/dedupe traces.
 - `logs/`: selected TLC and simulator outputs.
 - `COMMAND_MATRIX.md`: production command semantics gate.
@@ -27,6 +28,7 @@ java -jar tla2tools.jar -deadlock -config formal/MultiMaster-supported.cfg forma
 java -jar tla2tools.jar -deadlock -config formal/MultiMaster-unsupported.cfg formal/MultiMaster.tla
 java -jar tla2tools.jar -deadlock -config formal/CoreReplay.cfg formal/CoreReplay.tla
 java -jar tla2tools.jar -deadlock -config formal/TypeSemantics.cfg formal/TypeSemantics.tla
+java -jar tla2tools.jar -deadlock -config formal/Persistence.cfg formal/Persistence.tla
 sim/mm_sim.py --runs 2000 --steps 80
 ```
 
