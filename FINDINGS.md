@@ -137,7 +137,7 @@ Fix:
 - AOF load now reads and applies configured upstreams, runtime state, MVCC clocks, and RREPLAY dedupe state from the preamble before replaying the incremental AOF tail.
 - Local active/active writes always enter the RREPLAY/MVCC stamping path, even when peers are absent or disconnected.
 - Supported writes replayed from an incremental AOF tail are MVCC-stamped during AOF load when active/active is configured.
-- Regression coverage restarts from an AOF RDB preamble and verifies stale `MVCCRESTORE` payloads are rejected for base-file data, post-rewrite incremental AOF tail data, and single-key `DEL` tombstones.
+- Regression coverage restarts from an AOF RDB preamble and verifies stale `MVCCRESTORE` payloads are rejected for base-file data, post-rewrite incremental AOF tail data, multi-key `MSET`, and single-key `DEL` tombstones.
 
 ## Open Risks
 
@@ -147,7 +147,7 @@ Fix:
 
 ### AOF Rewrite And Restart Semantics
 
-The new AOF regression covers supported `SET` writes in both the RDB base file and the incremental AOF tail, plus single-key `DEL` tombstones in the incremental tail. Broader AOF fault tests are still needed for multi-key `MSET`, interrupted rewrites, and older AOF files containing commands that are now rejected in active/active mode.
+The new AOF regression covers supported `SET` writes in both the RDB base file and the incremental AOF tail, plus multi-key `MSET` and single-key `DEL` tombstones in the incremental tail. Broader AOF fault tests are still needed for interrupted rewrites and older AOF files containing commands that are now rejected in active/active mode.
 
 ### Replay ACK And Queue Semantics
 
