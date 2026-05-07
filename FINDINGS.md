@@ -99,6 +99,10 @@ Fix:
 
 The audit focused on RDB AUX metadata. AOF-only and AOF rewrite behavior still need direct testing. If the dataset is replayed without the corresponding MVCC/dedupe metadata, stale replay protection can be weaker after restart.
 
+### Internal Command Exposure
+
+`RREPLAY` rejects normal clients in command code, but `MVCCRESTORE` is registered as a dangerous write command and is callable by clients with sufficient ACL permission. That may be acceptable for a debugging/internal command, but it should be treated as public surface until it is gated to replication/internal callers or explicitly documented.
+
 ### Replay ACK And Queue Semantics
 
 The replay queue has focused tests for drain and overflow/fullsync request behavior, but ACK handling is still delicate. The implementation advances `replay_last_acked_id` from peer integer replies and drains pending replay frames in FIFO order. A stronger design should specify behavior for duplicate ACKs, unexpected ACK ids, reconnect races, and fullsync requests while new writes arrive.
